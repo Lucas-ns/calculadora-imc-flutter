@@ -1,17 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:imc_calculator/model/imc.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:imc_calculator/model/imc_hive.dart';
+import 'package:imc_calculator/pages/perfil_page.dart';
+import 'package:imc_calculator/service/calcular_imc.dart';
+import 'package:imc_calculator/shared/widgets/custom_drawer.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
 
   final String title;
 
@@ -22,35 +18,91 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   final TextEditingController _pesoController = TextEditingController();
   final TextEditingController _alturaController = TextEditingController();
-  final List<IMC> _imcList = [];
+  List<ImcHive> _imcList = [];
+
+  double? _altura;
+  String? _nome;
+
+  @override
+  void initState() {
+    super.initState();
+    _carregarPerfil();
+    _carregarHistorico();
+  }
+
+  Future<void> _carregarPerfil() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _nome = prefs.getString('nome');
+      _altura = prefs.getDouble('altura');
+    });
+  }
+
+  Future<void> _carregarHistorico() async {
+    final box = Hive.box<ImcHive>('historico_imc');
+    setState(() {
+      _imcList = box.values.toList();
+    });
+    // final prefs = await SharedPreferences.getInstance();
+    // final dataString = prefs.getString('historico_imc');
+    // if (dataString != null) {
+    //   final List<dynamic> jsonList = jsonDecode(dataString);
+    //   final List<IMC> historicoCarregado =
+    //       jsonList.map((e) => IMC.fromMap(e)).toList();
+    //   setState(() {
+    //     _imcList = historicoCarregado;
+    //   });
+    // }
+  }
+
+  // Future<void> _salvarHistorico() async {
+  //   final prefs = await SharedPreferences.getInstance();
+  //   final jsonList = _imcList.map((e) => e.toMap()).toList();
+  //   prefs.setString('historico_imc', jsonEncode(jsonList));
+  // }
 
   void calcularIMC() {
-    double peso = double.tryParse(_pesoController.text) ?? 0;
-    double altura = double.tryParse(_alturaController.text) ?? 0;
+    final peso = double.tryParse(_pesoController.text);
 
-    if (peso > 0 && altura > 0) {
-      IMC novoIMC = IMC(peso: peso, altura: altura);
+    if (_altura != null &&
+        _altura! > 0 &&
+        _nome != null &&
+        _nome!.isNotEmpty &&
+        peso != null) {
+      final imc = CalcularImc.calcularIMC(peso, _altura!);
+      final data =
+          ImcHive(nome: _nome!, peso: peso, altura: _altura!, imc: imc);
+
+      final box = Hive.box<ImcHive>('historico_imc');
+      box.add(data);
+
       setState(() {
-        _imcList.add(novoIMC);
+        _imcList = box.values.toList().reversed.toList();
       });
-      _pesoController.clear();
-      _alturaController.clear();
+
+      // setState(() {
+      //   _imcList.insert(0, data);
+      // });
+      // _salvarHistorico();
+      FocusScope.of(context).unfocus();
     } else {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content:
-              Text("Por favor, insira valores válidos de peso e altura.")));
+          content: Text("Por favor, insira os valores válidos.")));
     }
+
+    _pesoController.text = "";
   }
 
   void remover(int index) {
+    final box = Hive.box<ImcHive>('historico_imc');
+    box.deleteAt(index);
     setState(() {
-      _imcList.removeAt(index);
+      _imcList = box.values.toList().reversed.toList();
     });
   }
 
   @override
   void dispose() {
-    // TODO: implement dispose
     _pesoController.dispose();
     _alturaController.dispose();
     super.dispose();
@@ -58,26 +110,48 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    String nomeExibicao =
+        _nome != null && _nome!.isNotEmpty ? _nome! : 'Usuário';
+    String alturaExibicao =
+        _altura != null && _altura! > 0 ? '$_altura m' : 'N/D';
+
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
         title: Text(widget.title),
+      ),
+      drawer: CustomDrawer(
+        onProfileTap: () async {
+          final result = await Navigator.push(context,
+              MaterialPageRoute(builder: (context) => const PerfilPage()));
+
+          if (result == true) {
+            await _carregarPerfil();
+          }
+        },
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Nome: $nomeExibicao',
+                  style: const TextStyle(
+                      fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  'Altura: $alturaExibicao',
+                  style: const TextStyle(
+                      fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(
+              height: 20,
+            ),
             TextField(
               controller: _pesoController,
               keyboardType: TextInputType.number,
@@ -86,19 +160,11 @@ class _MyHomePageState extends State<MyHomePage> {
             const SizedBox(
               height: 20,
             ),
-            TextField(
-              controller: _alturaController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: "Altura (m)"),
-            ),
-            const SizedBox(
-              height: 20,
-            ),
             TextButton(
                 onPressed: () {
                   calcularIMC();
                 },
-                child: Text("Calcular")),
+                child: const Text("Calcular IMC")),
             const SizedBox(
               height: 40,
             ),
@@ -106,8 +172,13 @@ class _MyHomePageState extends State<MyHomePage> {
                 child: ListView.builder(
               itemCount: _imcList.length,
               itemBuilder: (context, index) {
+                final item = _imcList[index];
                 return ListTile(
-                  title: Text(_imcList[index].formatarImc()),
+                  title: Text(
+                      '${item.nome} - IMC: ${item.imc.toStringAsFixed(2)}'),
+                  subtitle: Text(
+                      'Classificação: ${CalcularImc.getClassificacaoImc(item.imc)}\n'
+                      'Peso: ${item.peso} kg | Altura: ${item.altura} m'),
                   trailing: IconButton(
                       onPressed: () {
                         remover(index);
